@@ -196,13 +196,12 @@ if active_provider == "Google Gemini":
     selected_llm_model = st.sidebar.selectbox(
         "Large Language Model (LLM):",
         options=["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
-        index=0
+        index=0,
+        help="Select the active Google Gemini model to process and formulate compliance answers."
     )
-    selected_emb_model = st.sidebar.selectbox(
-        "Embedding Model:",
-        options=["gemini-embedding-001", "gemini-embedding-2"],
-        index=0
-    )
+    # Automatically select the best non-deprecated embedding model for the LLM selected
+    selected_emb_model = "gemini-embedding-001"
+    st.sidebar.markdown(f"🧬 **Embedding Model:** `{selected_emb_model}` *(Optimized)*")
 else:
     # Ollama configuration
     st.sidebar.markdown('<div class="sidebar-header">🤖 LOCAL OLLAMA CONFIG</div>', unsafe_allow_html=True)
