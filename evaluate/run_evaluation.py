@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 from datasets import Dataset
 from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevance, context_recall, context_precision
+from ragas.metrics import faithfulness, answer_relevancy, context_recall, context_precision
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from rag_pipeline import RAGPipeline
 
@@ -55,30 +55,47 @@ def run_ragas_evaluation():
         gt = item["ground_truth"]
         print(f"[{idx+1}/10] Querying: '{q[:50]}...'")
         
-        try:
-            # Query RAG
-            response_stream, sources = pipeline.query(q)
-            
-            # Consume stream to get full answer
-            full_answer = ""
-            for chunk in response_stream:
-                if chunk and hasattr(chunk, "text") and chunk.text:
-                    full_answer += chunk.text
+        # Exponential backoff retry loop for querying the pipeline to respect RPM limits
+        full_answer = None
+        q_contexts = None
+        
+        for attempt in range(5):
+            try:
+                # Query RAG
+                response_stream, sources = pipeline.query(q)
+                
+                # Consume stream to get full answer
+                full_answer = ""
+                for chunk in response_stream:
+                    if chunk and hasattr(chunk, "text") and chunk.text:
+                        full_answer += chunk.text
+                        
+                # Context list of strings
+                q_contexts = [src["text"] for src in sources] if sources else ["No context retrieved"]
+                break
+                
+            except Exception as e:
+                if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e) or "quota" in str(e).lower() or "limit" in str(e).lower():
+                    delay = 15.0 * (2 ** attempt)
+                    print(f"RAG query rate limit hit. Sleeping for {delay}s...")
+                    time.sleep(delay)
+                else:
+                    print(f"Non-rate-limit error: {e}. Retrying anyway...")
+                    time.sleep(5.0)
                     
-            # Context list of strings
-            q_contexts = [src["text"] for src in sources] if sources else ["No context retrieved"]
+        if full_answer is None or q_contexts is None:
+            full_answer = "Error: Failed to fetch answer due to rate limits."
+            q_contexts = ["Error"]
             
-            questions.append(q)
-            answers.append(full_answer if full_answer.strip() else "I am sorry, but the provided anti-doping policy documents do not contain the answer to that question.")
-            contexts.append(q_contexts)
-            ground_truths.append(gt)
-            
-        except Exception as e:
-            print(f"Error querying pipeline on question {idx+1}: {e}")
-            questions.append(q)
-            answers.append(f"Error during query execution: {e}")
-            contexts.append(["Error"])
-            ground_truths.append(gt)
+        questions.append(q)
+        answers.append(full_answer if full_answer.strip() else "I am sorry, but the provided anti-doping policy documents do not contain the answer to that question.")
+        contexts.append(q_contexts)
+        ground_truths.append(gt)
+        
+        # Sleep for a baseline of 12 seconds between questions to remain below Gemini's 5 RPM free-tier limit and Cohere's 10 RPM trial limit
+        if idx < len(golden_set) - 1:
+            print("Sleeping 12s to respect API rate limits...")
+            time.sleep(12)
             
     print("Assembling dataset for Ragas...")
     eval_dict = {
@@ -95,21 +112,24 @@ def run_ragas_evaluation():
     evaluator_llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         google_api_key=gemini_key.strip(),
-        temperature=0.0
+        temperature=0.0,
+        max_retries=10
     )
     evaluator_embeddings = GoogleGenerativeAIEmbeddings(
         model="models/gemini-embedding-001",
-        google_api_key=gemini_key.strip()
+        google_api_key=gemini_key.strip(),
+        max_retries=10
     )
     
     # Run evaluation
-    print("Running Ragas evaluation metrics (faithfulness, answer_relevance, context_recall, context_precision)...")
+    print("Running Ragas evaluation metrics (faithfulness, answer_relevancy, context_recall, context_precision)...")
     try:
         result = evaluate(
             dataset=dataset,
-            metrics=[faithfulness, answer_relevance, context_recall, context_precision],
+            metrics=[faithfulness, answer_relevancy, context_recall, context_precision],
             llm=evaluator_llm,
-            embeddings=evaluator_embeddings
+            embeddings=evaluator_embeddings,
+            max_workers=1
         )
         
         print("\nEvaluation Completed Successfully!")
@@ -121,7 +141,7 @@ def run_ragas_evaluation():
         results_data = {
             "global_scores": {
                 "faithfulness": float(result.get("faithfulness", 0.0)),
-                "answer_relevance": float(result.get("answer_relevance", 0.0)),
+                "answer_relevance": float(result.get("answer_relevancy", 0.0)),
                 "context_recall": float(result.get("context_recall", 0.0)),
                 "context_precision": float(result.get("context_precision", 0.0))
             },
@@ -135,7 +155,7 @@ def run_ragas_evaluation():
                 "answer": row["answer"],
                 "ground_truth": row["ground_truth"],
                 "faithfulness": float(row.get("faithfulness", 0.0)) if not pd.isna(row.get("faithfulness")) else 0.0,
-                "answer_relevance": float(row.get("answer_relevance", 0.0)) if not pd.isna(row.get("answer_relevance")) else 0.0,
+                "answer_relevance": float(row.get("answer_relevancy", 0.0)) if not pd.isna(row.get("answer_relevancy")) else 0.0,
                 "context_recall": float(row.get("context_recall", 0.0)) if not pd.isna(row.get("context_recall")) else 0.0,
                 "context_precision": float(row.get("context_precision", 0.0)) if not pd.isna(row.get("context_precision")) else 0.0
             })
