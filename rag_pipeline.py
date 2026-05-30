@@ -35,7 +35,11 @@ class RAGPipeline:
         
         # Load API keys from parameters or environment
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        if self.api_key:
+            self.api_key = self.api_key.strip()
         self.cohere_api_key = os.environ.get("COHERE_API_KEY")
+        if self.cohere_api_key:
+            self.cohere_api_key = self.cohere_api_key.strip()
         
         self.rewritten_queries = []
         self.process_logs = []

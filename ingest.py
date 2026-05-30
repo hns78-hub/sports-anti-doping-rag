@@ -287,6 +287,8 @@ def run_ingestion(
     client = None
     if provider == "Google Gemini":
         gemini_key = api_key or os.environ.get("GEMINI_API_KEY")
+        if gemini_key:
+            gemini_key = gemini_key.strip()
         if not gemini_key:
             raise ValueError("Google Gemini API Key is missing. Please set it to proceed with Gemini embeddings.")
         client = genai.Client(api_key=gemini_key)
