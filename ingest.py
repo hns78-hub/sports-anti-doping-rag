@@ -301,11 +301,13 @@ def run_ingestion(
         
         try:
             if provider == "Google Gemini":
-                response = client.models.embed_content(
-                    model=embedding_model,
-                    contents=texts
-                )
-                embeddings = [emb.values for emb in response.embeddings]
+                embeddings = []
+                for t in texts:
+                    res = client.models.embed_content(
+                        model=embedding_model,
+                        contents=t
+                    )
+                    embeddings.append(res.embeddings[0].values)
             else:
                 # Local Ollama
                 embeddings = get_ollama_embeddings(embedding_model, texts)
