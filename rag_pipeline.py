@@ -3,10 +3,14 @@ import re
 import requests
 import json
 import chromadb
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from google.genai import errors
 from ingest import get_collection_name, OLLAMA_HOST
+
+# Load environment variables from .env file
+load_dotenv()
 
 WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_DIR = os.path.join(WORKSPACE_DIR, "chroma_db")
@@ -28,13 +32,18 @@ class RAGPipeline:
         self.provider = provider
         self.embedding_model = embedding_model
         self.llm_model = llm_model
-        self.api_key = api_key
+        
+        # Load API keys from parameters or environment
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        self.cohere_api_key = os.environ.get("COHERE_API_KEY")
+        
         self.rewritten_queries = []
+        self.process_logs = []
         
         # Initialize Gemini client if using Google Gemini
         if self.provider == "Google Gemini":
-            if not api_key:
-                raise ValueError("Google Gemini API Key is required when provider is Gemini.")
+            if not self.api_key:
+                raise ValueError("Google Gemini API Key is required when provider is Gemini. Please set it in your .env file or UI.")
             self.client = genai.Client(api_key=self.api_key)
         else:
             self.client = None
@@ -171,11 +180,57 @@ class RAGPipeline:
         except Exception as e:
             yield OllamaStreamWrapper(f"\n[Generation Error: {e}]")
 
+    def _cohere_rerank(self, query: str, documents: list[dict], top_n: int = 5) -> list[dict]:
+        """Reranks document chunks using Cohere Rerank v3.0 REST API."""
+        try:
+            headers = {
+                "accept": "application/json",
+                "content-type": "application/json",
+                "Authorization": f"Bearer {self.cohere_api_key}"
+            }
+            
+            # Prepare text inputs for Cohere
+            doc_texts = [d["text"] for d in documents]
+            
+            payload = {
+                "model": "rerank-english-v3.0",
+                "query": query,
+                "documents": doc_texts,
+                "top_n": top_n
+            }
+            
+            response = requests.post(
+                "https://api.cohere.com/v1/rerank",
+                headers=headers,
+                json=payload,
+                timeout=15
+            )
+            
+            if response.status_code != 200:
+                print(f"Cohere Rerank API returned status {response.status_code}: {response.text}")
+                return documents[:top_n]
+                
+            results = response.json().get("results", [])
+            reranked_docs = []
+            for r in results:
+                orig_idx = r["index"]
+                new_score = r["relevance_score"]
+                
+                # Copy and update relevance score
+                doc = documents[orig_idx].copy()
+                doc["relevance"] = new_score
+                reranked_docs.append(doc)
+                
+            return reranked_docs
+            
+        except Exception as e:
+            print(f"Error during Cohere Rerank: {e}")
+            return documents[:top_n]
+
     def query(self, user_query: str, k: int = 5) -> tuple[any, list[dict]]:
         """
-        Performs vector search on ChromaDB, compiles prompt, and streams
-        the response from Gemini or Ollama. Supports automatic query expansion/rewriting
-        up to 3 times if similarity score drops below 0.5 threshold.
+        Performs vector search on ChromaDB, reranks via Cohere (if available), 
+        compiles prompt, and streams the response from Gemini or Ollama.
         """
         # Ensure database is loaded
         collection_name = get_collection_name(self.embedding_model)
@@ -198,7 +253,8 @@ class RAGPipeline:
             "step": "Pipeline Initialized",
             "message": f"Starting RAG query pipeline using **{self.provider}**.\n"
                        f"- LLM Model: `{self.llm_model}`\n"
-                       f"- Embedding Model: `{self.embedding_model}`"
+                       f"- Embedding Model: `{self.embedding_model}`\n"
+                       f"- Cohere Reranker: `{'Enabled (rerank-english-v3.0)' if self.cohere_api_key else 'Disabled (Fallback to Cosine)'}`"
         })
 
         for attempt in range(max_retries + 1):
@@ -226,22 +282,23 @@ class RAGPipeline:
                 query_embedding = self._get_ollama_query_embedding(current_query)
 
             # Step 3: Log Vector Database Query
+            # If Cohere reranking is active, fetch a larger pool of candidates to rerank
+            fetch_k = max(k * 3, 12) if self.cohere_api_key else k
             self.process_logs.append({
                 "step": f"Querying ChromaDB ({attempt_prefix})",
-                "message": f"Performing Cosine Similarity matching in ChromaDB for top {k} nearest clauses."
+                "message": f"Performing Cosine Similarity matching in ChromaDB.\n"
+                           f"Retrieving top `{fetch_k}` nearest candidate clauses."
             })
 
-            # 2. Query ChromaDB for top K matches
+            # 2. Query ChromaDB for matches
             results = self.collection.query(
                 query_embeddings=[query_embedding],
-                n_results=k,
+                n_results=fetch_k,
                 include=["documents", "metadatas", "distances"]
             )
 
             # 3. Parse and rank sources
-            sources = []
-            context_parts = []
-            top_relevance = 0.0
+            candidates = []
             
             if results and "documents" in results and results["documents"]:
                 docs = results["documents"][0]
@@ -250,40 +307,57 @@ class RAGPipeline:
                 
                 for idx, (doc_text, meta, dist) in enumerate(zip(docs, metadatas, distances)):
                     relevance_score = max(0.0, min(1.0, 1.0 - dist))
-                    if idx == 0:
-                        top_relevance = relevance_score
-                        
+                    
                     source_info = {
                         "text": doc_text,
                         "source": meta.get("source", "Unknown"),
                         "page": meta.get("page", "Unknown"),
                         "relevance": relevance_score
                     }
-                    sources.append(source_info)
-                    
-                    context_parts.append(
-                        f"Source: {source_info['source']}\n"
-                        f"Page/Section: {source_info['page']}\n"
-                        f"Relevance: {relevance_score:.2f}\n"
-                        f"Content:\n{doc_text}\n"
-                        f"---"
-                    )
+                    candidates.append(source_info)
             
-            # Step 4: Log Similarity Scores & Threshold Check
+            # Step 4: Reranking with Cohere Rerank v3
+            top_relevance = 0.0
+            if self.cohere_api_key and candidates:
+                self.process_logs.append({
+                    "step": f"Cohere Rerank v3.0 ({attempt_prefix})",
+                    "message": f"Passing `{len(candidates)}` vector matches to Cohere API.\n"
+                               f"Executing deep semantic reranking using `rerank-english-v3.0`."
+                })
+                sources = self._cohere_rerank(current_query, candidates, top_n=k)
+                if sources:
+                    top_relevance = sources[0]["relevance"]
+            else:
+                # Fallback directly to cosine order
+                sources = candidates[:k]
+                if sources:
+                    top_relevance = sources[0]["relevance"]
+
+            # Format context string
+            context_parts = []
+            for src in sources:
+                context_parts.append(
+                    f"Source: {src['source']}\n"
+                    f"Page/Section: {src['page']}\n"
+                    f"Relevance: {src['relevance']:.2f}\n"
+                    f"Content:\n{src['text']}\n"
+                    f"---"
+                )
+            context_str = "\n".join(context_parts)
+            
+            # Step 5: Log Similarity Scores & Threshold Check
             self.process_logs.append({
                 "step": f"Similarity Evaluation ({attempt_prefix})",
                 "message": f"Evaluating retrieved results against quality threshold (>= 50%).\n"
-                           f"- **Top Similarity Score: {top_relevance * 100:.1f}%**"
+                           f"- **Top Reranked Score: {top_relevance * 100:.1f}%**"
             })
 
-            context_str = "\n".join(context_parts)
-            
             # If top match matches or exceeds similarity threshold, or we exhausted retries
             if top_relevance >= 0.5 or attempt == max_retries:
                 if top_relevance >= 0.5:
                     self.process_logs.append({
                         "step": "Retrieval Finalized",
-                        "message": f"Relevance score **{top_relevance * 100:.1f}%** satisfies quality threshold. Proceeding to formulate final answer."
+                        "message": f"Rerank score **{top_relevance * 100:.1f}%** satisfies quality threshold. Proceeding to formulate final answer."
                     })
                 else:
                     self.process_logs.append({
@@ -293,7 +367,6 @@ class RAGPipeline:
                 break
                 
             # Otherwise, rewrite and loop again
-            # Step 5: Log Query Rewriting Trigger
             self.process_logs.append({
                 "step": f"Triggering Query Reformulation",
                 "message": f"Top similarity score ({top_relevance * 100:.1f}%) is below 50% threshold.\n"

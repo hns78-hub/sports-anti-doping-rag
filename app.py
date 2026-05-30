@@ -4,8 +4,12 @@ import time
 import sys
 import glob
 import requests
+from dotenv import load_dotenv
 from ingest import run_ingestion, WORKSPACE_DIR, DB_DIR, OLLAMA_HOST
 from rag_pipeline import RAGPipeline
+
+# Load environment variables
+load_dotenv()
 
 # Avoid encoding errors on Windows when stdout/stderr are redirected
 if sys.platform.startswith("win"):

@@ -4,11 +4,15 @@ import re
 import argparse
 import sys
 import requests
+from dotenv import load_dotenv
 from pypdf import PdfReader
 from docx import Document
 import chromadb
 from google import genai
 from google.genai import errors
+
+# Load environment variables
+load_dotenv()
 
 # Avoid encoding errors on Windows when stdout/stderr are redirected
 if sys.platform.startswith("win"):
