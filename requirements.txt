@@ -4,3 +4,5 @@ streamlit
 pypdf
 python-docx
 python-dotenv
+ragas
+langchain-google-genai
