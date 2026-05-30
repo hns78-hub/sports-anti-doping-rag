@@ -410,12 +410,27 @@ if active_query:
                 
                 thinking_placeholder.empty()
                 
-                # Render query reformulation notifications if triggered
-                if hasattr(pipeline, "rewritten_queries") and pipeline.rewritten_queries:
-                    for r_idx, q in enumerate(pipeline.rewritten_queries):
-                        st.info(f"🔄 **Query Reformulation (Attempt {r_idx+1})**: Similarity was < 50%. Expanded search to: *\"{q}\"*")
-                
+                # Render detailed step-by-step processing logs
+                if hasattr(pipeline, "process_logs") and pipeline.process_logs:
+                    with st.expander("🛠️ RAG Pipeline Execution Details", expanded=True):
+                        for log in pipeline.process_logs:
+                            st.markdown(f"**Step: {log['step']}**")
+                            st.write(log['message'])
+                            st.markdown("---")
+                            
+                # Show top retrieved documents and scores before the response
+                if sources:
+                    st.markdown("### 🎯 Top Retrieved Clauses & Similarity Scores:")
+                    for idx, src in enumerate(sources[:5]):  # Top 3-5
+                        st.markdown(
+                            f"**Rank {idx+1}**: Relevance: `{src['relevance']*100:.1f}%` | "
+                            f"Source: `{src['source']}` | Page/Section: `{src['page']}`"
+                        )
+                        st.caption(f"Snippet: *\"{src['text'][:180]}...\"*")
+                    st.markdown("---")
+
                 # Stream the results
+                st.markdown("### 📝 Formulated Answer:")
                 response_placeholder = st.empty()
                 full_response = ""
                 

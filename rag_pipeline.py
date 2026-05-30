@@ -187,12 +187,30 @@ class RAGPipeline:
 
         current_query = user_query
         self.rewritten_queries = []
+        self.process_logs = []  # Detailed steps carried out by the RAG
         max_retries = 3
         
         sources = []
         context_str = ""
 
+        # Step 1: Log initial search
+        self.process_logs.append({
+            "step": "Pipeline Initialized",
+            "message": f"Starting RAG query pipeline using **{self.provider}**.\n"
+                       f"- LLM Model: `{self.llm_model}`\n"
+                       f"- Embedding Model: `{self.embedding_model}`"
+        })
+
         for attempt in range(max_retries + 1):
+            attempt_prefix = f"Attempt {attempt + 1}" if attempt > 0 else "Initial Attempt"
+            
+            # Step 2: Log Embedding Generation
+            self.process_logs.append({
+                "step": f"Generating Query Embedding ({attempt_prefix})",
+                "message": f"Converting query to semantic vector using `{self.embedding_model}`.\n"
+                           f"Query: *\"{current_query}\"*"
+            })
+
             # 1. Embed query
             if self.provider == "Google Gemini":
                 try:
@@ -206,6 +224,12 @@ class RAGPipeline:
             else:
                 # Local Ollama
                 query_embedding = self._get_ollama_query_embedding(current_query)
+
+            # Step 3: Log Vector Database Query
+            self.process_logs.append({
+                "step": f"Querying ChromaDB ({attempt_prefix})",
+                "message": f"Performing Cosine Similarity matching in ChromaDB for top {k} nearest clauses."
+            })
 
             # 2. Query ChromaDB for top K matches
             results = self.collection.query(
@@ -244,16 +268,38 @@ class RAGPipeline:
                         f"Content:\n{doc_text}\n"
                         f"---"
                     )
-                    
+            
+            # Step 4: Log Similarity Scores & Threshold Check
+            self.process_logs.append({
+                "step": f"Similarity Evaluation ({attempt_prefix})",
+                "message": f"Evaluating retrieved results against quality threshold (>= 50%).\n"
+                           f"- **Top Similarity Score: {top_relevance * 100:.1f}%**"
+            })
+
             context_str = "\n".join(context_parts)
             
             # If top match matches or exceeds similarity threshold, or we exhausted retries
             if top_relevance >= 0.5 or attempt == max_retries:
-                print(f"Retrieval finalized on Attempt {attempt}. Top relevance: {top_relevance:.2f}")
+                if top_relevance >= 0.5:
+                    self.process_logs.append({
+                        "step": "Retrieval Finalized",
+                        "message": f"Relevance score **{top_relevance * 100:.1f}%** satisfies quality threshold. Proceeding to formulate final answer."
+                    })
+                else:
+                    self.process_logs.append({
+                        "step": "Retrieval Finalized (Fallback)",
+                        "message": f"Maximum rewrites ({max_retries}) reached. Proceeding to answer with best available context."
+                    })
                 break
                 
             # Otherwise, rewrite and loop again
-            print(f"Top match relevance was {top_relevance:.2f} < 0.5. Rewriting query (Attempt {attempt+1}/{max_retries})...")
+            # Step 5: Log Query Rewriting Trigger
+            self.process_logs.append({
+                "step": f"Triggering Query Reformulation",
+                "message": f"Top similarity score ({top_relevance * 100:.1f}%) is below 50% threshold.\n"
+                           f"Triggering LLM query expansion to improve regulatory coverage..."
+            })
+            
             rewritten = self._rewrite_query(current_query)
             self.rewritten_queries.append(rewritten)
             current_query = rewritten
