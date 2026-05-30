@@ -1,0 +1,72 @@
+[
+  {
+    "id": 1,
+    "question": "What minimum issues must a Major Event Organization's Results Management decision address according to the 2021 World Anti-Doping Code?",
+    "ground_truth": "(i) whether an anti-doping rule violation was committed, the factual basis for such determination, and the specific Code Articles violated, and (ii) applicable Disqualifications under Articles 9 and 10.1, with any resulting forfeiture of medals, points and prizes.",
+    "source_doc": "2021_wada_code.pdf",
+    "reference_location": "Page/Section: 62"
+  },
+  {
+    "id": 2,
+    "question": "What is one responsibility of an Anti-Doping Organization regarding the pursuit of anti-doping rule violations?",
+    "ground_truth": "To vigorously pursue all potential anti-doping rule violations within its authority including investigation into whether Athlete Support Personnel or other Persons may have been involved in each case of doping.",
+    "source_doc": "2021_wada_code.pdf",
+    "reference_location": "Page/Section: 122"
+  },
+  {
+    "id": 3,
+    "question": "When did the Singapore Cricket Association sign the Collective Policy agreeing to recognize Anti-Doping Singapore (ADS) as the National Anti-Doping Organisation?",
+    "ground_truth": "The Singapore Cricket Association signed the Collective Policy on 10 Jun 2022.",
+    "source_doc": "Anti Doping.docx",
+    "reference_location": "Page/Section: 1"
+  },
+  {
+    "id": 4,
+    "question": "Who is bound by the Anti-Doping Rules of the Singapore Cricket Association?",
+    "ground_truth": "All affiliates, members, athletes, participants, staff and any other individual, paid or on a volunteer basis, who are under the jurisdiction of the Singapore Cricket Association are bound by the Anti- Doping Rules of the Singapore Cricket Association and agree to abide by these Anti-Doping Rules.",
+    "source_doc": "Anti Doping.docx",
+    "reference_location": "Page/Section: 3"
+  },
+  {
+    "id": 5,
+    "question": "What is the primary purpose of the Singapore Cricket Association's Whistleblowing Regulations?",
+    "ground_truth": "To provide a formal, secure, and confidential channel for anyone (members, officials, staff, volunteers, umpires, and other stakeholders) to report concerns about wrongdoing, misconduct, or potential breaches of laws, policies or ethical standards in SCA, to ensure that concerns are properly investigated and addressed, while protecting whistleblowers from retaliation or victimisation, and to promote a culture of transparency, accountability, integrity, and trust within SC.",
+    "source_doc": "Whistleblowing Regulations SCA 08 08 2025 _ Singapore Cricket Association.pdf",
+    "reference_location": "Page/Section: 1"
+  },
+  {
+    "id": 6,
+    "question": "What are the primary internal reporting channels for whistleblowing concerns under the Singapore Cricket Association's regulations?",
+    "ground_truth": "Email / written form / secure online portal at admin@singaporecricket.org.",
+    "source_doc": "Whistleblowing Regulations SCA 08 08 2025 _ Singapore Cricket Association.pdf",
+    "reference_location": "Page/Section: 2"
+  },
+  {
+    "id": 7,
+    "question": "What consequence applies to individuals who make false or malicious whistleblowing reports under the SCA's Whistleblowing Regulations?",
+    "ground_truth": "Individuals making false or malicious reports forfeit any protection under this regulation.",
+    "source_doc": "Whistleblowing Regulations SCA 08 08 2025 _ Singapore Cricket Association.pdf",
+    "reference_location": "Page/Section: 3"
+  },
+  {
+    "id": 8,
+    "question": "Who is responsible for interpreting and implementing the Singapore Cricket Association League Rules 2022?",
+    "ground_truth": "The Tournament Committee (TC) elected by the General Committee of the SCA.",
+    "source_doc": "7683-3.pdf",
+    "reference_location": "Page/Section: 1"
+  },
+  {
+    "id": 9,
+    "question": "What is the penalty for a Premier League team violating the rule on the total number of Foreign Players and Guest Players in a single match under SCA League Rules 2022?",
+    "ground_truth": "The team would have to forfeit the match and the match will be awarded to the opposition. That team will also be penalized an additional eight points per violation.",
+    "source_doc": "7683-3.pdf",
+    "reference_location": "Page/Section: 8"
+  },
+  {
+    "id": 10,
+    "question": "How many points are awarded to a team that receives a walkover according to the Singapore Cricket Association Playing Conditions 2022?",
+    "ground_truth": "10 points.",
+    "source_doc": "7683-2.pdf",
+    "reference_location": "Page/Section: 17"
+  }
+]
