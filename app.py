@@ -67,49 +67,6 @@ st.markdown("""
         font-weight: 300;
     }
     
-    /* Styled Cards for Sample Questions */
-    .card-container {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 1rem;
-        margin-bottom: 2rem;
-    }
-    
-    .sample-card {
-        background-color: #1e293b;
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 1.2rem;
-        cursor: pointer;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        text-align: left;
-    }
-    
-    .sample-card:hover {
-        border-color: #6366f1;
-        background-color: #1e1b4b;
-        transform: translateY(-4px);
-        box-shadow: 0 10px 20px rgba(99, 102, 241, 0.15);
-    }
-    
-    .card-icon {
-        font-size: 1.5rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .card-title {
-        font-family: 'Outfit', sans-serif;
-        font-weight: 600;
-        color: #38bdf8;
-        margin-bottom: 0.4rem;
-    }
-    
-    .card-desc {
-        font-size: 0.9rem;
-        color: #94a3b8;
-        line-height: 1.4;
-    }
-    
     /* Sidebar premium touch */
     .sidebar-header {
         font-family: 'Outfit', sans-serif;
@@ -155,6 +112,15 @@ st.markdown("""
         font-weight: 600;
         font-size: 1.05rem;
         margin-top: 10px;
+    }
+    
+    /* Audit card styles */
+    .audit-card {
+        background-color: #1e293b;
+        border-left: 5px solid #818cf8;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -238,22 +204,16 @@ else:
     st.sidebar.markdown('<div class="sidebar-header">🤖 LOCAL OLLAMA CONFIG</div>', unsafe_allow_html=True)
     if not ollama_connected:
         st.sidebar.error("⚠️ Local Ollama server not detected. Make sure Ollama is running at http://localhost:11434")
-        
-        # Fallback text inputs if Ollama is not connected
         selected_llm_model = st.sidebar.text_input("Local LLM Model:", value="llama3")
         selected_emb_model = st.sidebar.text_input("Local Embedding Model:", value="nomic-embed-text")
     else:
         st.sidebar.success("💡 Connected to local Ollama server.")
-        
-        # Filter matching model families or provide selection
         selected_llm_model = st.sidebar.selectbox(
             "Select Local LLM Model:",
             options=ollama_model_list,
             index=0 if ollama_model_list else 0,
             help="Select the model downloaded in Ollama to formulate answers."
         )
-        
-        # Find likely embedding models or show all
         emb_candidates = [m for m in ollama_model_list if "embed" in m or "minilm" in m]
         emb_options = emb_candidates if emb_candidates else ollama_model_list
         selected_emb_model = st.sidebar.selectbox(
@@ -273,7 +233,6 @@ if active_provider == "Ollama" or (active_provider == "Google Gemini" and active
         db_status = pipeline.check_db_status()
         pipeline_ready = True
         
-        # Diagnostic button to list available models in case of mismatch (Gemini only)
         if active_provider == "Google Gemini":
             if st.sidebar.button("🔍 List Available Gemini Models", use_container_width=True):
                 st.sidebar.markdown("**Available Cloud Models:**")
@@ -325,7 +284,6 @@ if st.sidebar.button("⚡ Ingest / Sync Documents", use_container_width=True):
                     provider=active_provider
                 )
                 
-                # Clear pipeline cache so it loads the fresh DB
                 st.cache_resource.clear()
                 
                 status.update(label="✅ Ingestion Successful!", state="complete", expanded=False)
@@ -341,125 +299,189 @@ if st.sidebar.button("⚡ Ingest / Sync Documents", use_container_width=True):
 
 # ----------------- MAIN INTERFACE -----------------
 
-# Chat Session State management
+# Chat and Audit History Session State
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "query_trigger" not in st.session_state:
     st.session_state.query_trigger = None
+if "history_log" not in st.session_state:
+    st.session_state.history_log = []
 
-# Quick Clickable suggested cards (shown only if chat is empty)
-if len(st.session_state.chat_history) == 0:
-    st.markdown(f"### 🔍 Anti-Doping Assistant — Running via **{active_provider}**")
-    st.markdown("Select a sample compliance query below or type your own:")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🧪 What is WADA's definition of a Prohibited Substance?\n\n(Click to query)", use_container_width=True):
-            st.session_state.query_trigger = "What is the definition of a Prohibited Substance under WADA rules?"
-        if st.button("🏥 What are the rules regarding Therapeutic Use Exemptions (TUEs)?\n\n(Click to query)", use_container_width=True):
-            st.session_state.query_trigger = "What are the rules and requirements for obtaining a Therapeutic Use Exemption (TUE)?"
-    with col2:
-        if st.button("📢 What constitutes an Anti-Doping Rule Violation (ADRV)?\n\n(Click to query)", use_container_width=True):
-            st.session_state.query_trigger = "What constitutes an Anti-Doping Rule Violation (ADRV)?"
-        if st.button("🤫 What are the SCA Whistleblowing regulations?\n\n(Click to query)", use_container_width=True):
-            st.session_state.query_trigger = "What are the whistleblower protection and reporting guidelines under Singapore Cricket Association rules?"
+# Setup visual dual-panel tabs for cleaner UX
+tab_chat, tab_history = st.tabs(["💬 Compliance Chat Panel", "📜 Detailed Audit & History Log"])
 
-st.markdown("---")
+with tab_chat:
+    # Quick Clickable suggested cards (shown only if chat is empty)
+    if len(st.session_state.chat_history) == 0:
+        st.markdown(f"### 🔍 Anti-Doping Assistant — Running via **{active_provider}**")
+        st.markdown("Select a sample compliance query below or type your own:")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🧪 What is WADA's definition of a Prohibited Substance?\n\n(Click to query)", use_container_width=True):
+                st.session_state.query_trigger = "What is the definition of a Prohibited Substance under WADA rules?"
+            if st.button("🏥 What are the rules regarding Therapeutic Use Exemptions (TUEs)?\n\n(Click to query)", use_container_width=True):
+                st.session_state.query_trigger = "What are the rules and requirements for obtaining a Therapeutic Use Exemption (TUE)?"
+        with col2:
+            if st.button("📢 What constitutes an Anti-Doping Rule Violation (ADRV)?\n\n(Click to query)", use_container_width=True):
+                st.session_state.query_trigger = "What constitutes an Anti-Doping Rule Violation (ADRV)?"
+            if st.button("🤫 What are the SCA Whistleblowing regulations?\n\n(Click to query)", use_container_width=True):
+                st.session_state.query_trigger = "What are the whistleblower protection and reporting guidelines under Singapore Cricket Association rules?"
 
-# Render previous chat history using custom layout
-for message in st.session_state.chat_history:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        if message["role"] == "assistant" and "sources" in message and message["sources"]:
-            st.markdown('<div class="source-header">📚 Retrieved Policy References:</div>', unsafe_allow_html=True)
-            for idx, src in enumerate(message["sources"]):
-                with st.expander(f"📄 {src['source']} — Page/Section {src['page']} (Relevance: {src['relevance']*100:.1f}%)"):
-                    st.markdown(f"*{src['text']}*")
+    st.markdown("---")
 
-# Chat input bar
-user_input = st.chat_input("Ask a question about the sports anti-doping policies...")
+    # Render previous chat history
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            if message["role"] == "assistant" and "sources" in message and message["sources"]:
+                st.markdown('<div class="source-header">📚 Retrieved Policy References:</div>', unsafe_allow_html=True)
+                for idx, src in enumerate(message["sources"]):
+                    with st.expander(f"📄 {src['source']} — Page/Section {src['page']} (Relevance: {src['relevance']*100:.1f}%)"):
+                        st.markdown(f"*{src['text']}*")
 
-active_query = None
-if user_input:
-    active_query = user_input
-elif st.session_state.query_trigger:
-    active_query = st.session_state.query_trigger
-    st.session_state.query_trigger = None
+    # Chat input bar
+    user_input = st.chat_input("Ask a question about the sports anti-doping policies...")
 
-# Processing Query
-if active_query:
-    with st.chat_message("user"):
-        st.markdown(active_query)
-    st.session_state.chat_history.append({"role": "user", "content": active_query})
-    
-    with st.chat_message("assistant"):
-        if active_provider == "Google Gemini" and not active_api_key:
-            st.error("🔒 Please enter a Google Gemini API Key in the sidebar configuration to execute queries.")
-        elif active_provider == "Ollama" and not ollama_connected:
-            st.error("❌ Ollama server is not running locally. Please launch Ollama to run the queries for free.")
-        elif not db_status["initialized"]:
-            st.warning(f"⚠️ ChromaDB has no vectors for embedding model '{selected_emb_model}'. Please select your files and click 'Ingest / Sync Documents' in the sidebar first.")
-        else:
-            thinking_placeholder = st.markdown(f'<div class="thinking">🔍 Searching policies and analyzing via {active_provider} ({selected_llm_model})...</div>', unsafe_allow_html=True)
-            
-            try:
-                pipeline = get_rag_pipeline(active_api_key, selected_emb_model, selected_llm_model, active_provider)
+    active_query = None
+    if user_input:
+        active_query = user_input
+    elif st.session_state.query_trigger:
+        active_query = st.session_state.query_trigger
+        st.session_state.query_trigger = None
+
+    # Processing Query
+    if active_query:
+        with st.chat_message("user"):
+            st.markdown(active_query)
+        st.session_state.chat_history.append({"role": "user", "content": active_query})
+        
+        with st.chat_message("assistant"):
+            if active_provider == "Google Gemini" and not active_api_key:
+                st.error("🔒 Please enter a Google Gemini API Key in the sidebar configuration to execute queries.")
+            elif active_provider == "Ollama" and not ollama_connected:
+                st.error("❌ Ollama server is not running locally. Please launch Ollama to run the queries for free.")
+            elif not db_status["initialized"]:
+                st.warning(f"⚠️ ChromaDB has no vectors for embedding model '{selected_emb_model}'. Please select your files and click 'Ingest / Sync Documents' in the sidebar first.")
+            else:
+                thinking_placeholder = st.markdown(f'<div class="thinking">🔍 Searching policies and analyzing via {active_provider} ({selected_llm_model})...</div>', unsafe_allow_html=True)
                 
-                # Run RAG Query
-                response_stream, sources = pipeline.query(active_query)
+                try:
+                    pipeline = get_rag_pipeline(active_api_key, selected_emb_model, selected_llm_model, active_provider)
+                    
+                    # Run RAG Query
+                    response_stream, sources = pipeline.query(active_query)
+                    
+                    thinking_placeholder.empty()
+                    
+                    # Render detailed step-by-step processing logs
+                    if hasattr(pipeline, "process_logs") and pipeline.process_logs:
+                        with st.expander("🛠... RAG Pipeline Execution Details", expanded=True):
+                            for log in pipeline.process_logs:
+                                st.markdown(f"**Step: {log['step']}**")
+                                st.write(log['message'])
+                                st.markdown("---")
+                                
+                    # Show top retrieved documents and scores before the response
+                    if sources:
+                        st.markdown("### 🎯 Top Retrieved Clauses & Similarity Scores:")
+                        for idx, src in enumerate(sources[:5]):  # Top 3-5
+                            st.markdown(
+                                f"**Rank {idx+1}**: Relevance: `{src['relevance']*100:.1f}%` | "
+                                f"Source: `{src['source']}` | Page/Section: `{src['page']}`"
+                            )
+                            st.caption(f"Snippet: *\"{src['text'][:180]}...\"*")
+                        st.markdown("---")
+
+                    # Stream the results
+                    st.markdown("### 📝 Formulated Answer:")
+                    response_placeholder = st.empty()
+                    full_response = ""
+                    
+                    for chunk in response_stream:
+                        if chunk.text:
+                            full_response += chunk.text
+                            response_placeholder.markdown(full_response + "▌")
+                    
+                    response_placeholder.markdown(full_response)
+                    
+                    # Render sources
+                    if sources:
+                        st.markdown('<div class="source-header">📚 Retrieved Policy References:</div>', unsafe_allow_html=True)
+                        for idx, src in enumerate(sources):
+                            with st.expander(f"📄 {src['source']} — Page/Section {src['page']} (Relevance: {src['relevance']*100:.1f}%)"):
+                                st.markdown(f"*{src['text']}*")
+                                
+                    # Save assistant output to standard chat
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": full_response,
+                        "sources": sources
+                    })
+                    
+                    # Save rich detailed structured history log
+                    st.session_state.history_log.append({
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "query": active_query,
+                        "answer": full_response,
+                        "provider": active_provider,
+                        "llm_model": selected_llm_model,
+                        "emb_model": selected_emb_model,
+                        "rewritten_queries": list(pipeline.rewritten_queries) if hasattr(pipeline, "rewritten_queries") else [],
+                        "process_logs": list(pipeline.process_logs) if hasattr(pipeline, "process_logs") else [],
+                        "sources": sources
+                    })
+                    
+                except Exception as e:
+                    thinking_placeholder.empty()
+                    import traceback
+                    st.error(f"An error occurred: {e}")
+                    st.code(traceback.format_exc(), language="python")
+                    st.session_state.chat_history.append({
+                        "role": "assistant",
+                        "content": f"Sorry, I encountered an error: {e}"
+                    })
+
+with tab_history:
+    st.markdown("### 📜 System Execution History & RAG Audit Log")
+    if not st.session_state.history_log:
+        st.info("No queries have been executed yet in this session. Ask a question to generate audit traces.")
+    else:
+        # Display the logs in reverse order (newest first)
+        for idx, entry in enumerate(reversed(st.session_state.history_log)):
+            with st.expander(f"⏱️ [{entry['timestamp']}] Query: \"{entry['query'][:60]}...\""):
+                st.markdown(f'<div class="audit-card"><strong>Prompt Query:</strong><br/>{entry["query"]}</div>', unsafe_allow_html=True)
                 
-                thinking_placeholder.empty()
+                # Providers meta-badges
+                st.markdown(
+                    f"**Provider**: `{entry['provider']}` | "
+                    f"**LLM Model**: `{entry['llm_model']}` | "
+                    f"**Embedding Model**: `{entry['emb_model']}`"
+                )
                 
-                # Render detailed step-by-step processing logs
-                if hasattr(pipeline, "process_logs") and pipeline.process_logs:
-                    with st.expander("🛠️ RAG Pipeline Execution Details", expanded=True):
-                        for log in pipeline.process_logs:
-                            st.markdown(f"**Step: {log['step']}**")
-                            st.write(log['message'])
-                            st.markdown("---")
-                            
-                # Show top retrieved documents and scores before the response
-                if sources:
-                    st.markdown("### 🎯 Top Retrieved Clauses & Similarity Scores:")
-                    for idx, src in enumerate(sources[:5]):  # Top 3-5
-                        st.markdown(
-                            f"**Rank {idx+1}**: Relevance: `{src['relevance']*100:.1f}%` | "
-                            f"Source: `{src['source']}` | Page/Section: `{src['page']}`"
-                        )
-                        st.caption(f"Snippet: *\"{src['text'][:180]}...\"*")
+                # Query expansion / reformulations
+                if entry['rewritten_queries']:
+                    st.markdown("#### 🔄 Query Expansion & Synonyms:")
+                    for r_idx, q in enumerate(entry['rewritten_queries']):
+                        st.markdown(f"- **Attempt {r_idx+1}**: *\"{q}\"*")
+                else:
+                    st.markdown("#### 🔄 Query Expansion: `None (Direct Match)`")
+                
+                # Diagnostic RAG process steps
+                st.markdown("#### 🛠️ RAG Pipeline Step Logs:")
+                for step in entry['process_logs']:
+                    st.markdown(f"- **{step['step']}**: {step['message']}")
+                
+                # Ranked retrieved results
+                st.markdown("#### 🎯 Reranked Retrieved Clauses & Similarity Scores:")
+                for s_idx, src in enumerate(entry['sources'][:5]):
+                    st.markdown(
+                        f"**Rank {s_idx+1} (Relevance Score: {src['relevance']*100:.1f}%)**: "
+                        f"Page `{src['page']}` | File: `{src['source']}`"
+                    )
+                    st.caption(f"Context Text: *\"{src['text']}\"*")
                     st.markdown("---")
-
-                # Stream the results
-                st.markdown("### 📝 Formulated Answer:")
-                response_placeholder = st.empty()
-                full_response = ""
-                
-                for chunk in response_stream:
-                    if chunk.text:
-                        full_response += chunk.text
-                        response_placeholder.markdown(full_response + "▌")
-                
-                response_placeholder.markdown(full_response)
-                
-                # Render sources
-                if sources:
-                    st.markdown('<div class="source-header">📚 Retrieved Policy References:</div>', unsafe_allow_html=True)
-                    for idx, src in enumerate(sources):
-                        with st.expander(f"📄 {src['source']} — Page/Section {src['page']} (Relevance: {src['relevance']*100:.1f}%)"):
-                            st.markdown(f"*{src['text']}*")
-                            
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": full_response,
-                    "sources": sources
-                })
-                
-            except Exception as e:
-                thinking_placeholder.empty()
-                import traceback
-                st.error(f"An error occurred: {e}")
-                st.code(traceback.format_exc(), language="python")
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": f"Sorry, I encountered an error: {e}"
-                })
+                    
+                # Formulated LLM Answer
+                st.markdown("#### 📝 Formulated Answer:")
+                st.write(entry['answer'])
