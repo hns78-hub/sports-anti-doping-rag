@@ -4,11 +4,13 @@ import re
 import argparse
 import sys
 import requests
+import time
 from dotenv import load_dotenv
 from pypdf import PdfReader
 from docx import Document
 import chromadb
 from google import genai
+from google.genai import types
 from google.genai import errors
 
 # Load environment variables
@@ -303,11 +305,27 @@ def run_ingestion(
             if provider == "Google Gemini":
                 embeddings = []
                 for t in texts:
-                    res = client.models.embed_content(
-                        model=embedding_model,
-                        contents=t
-                    )
-                    embeddings.append(res.embeddings[0].values)
+                    # Implement exponential backoff for rate limits (free tier is 100 RPM)
+                    emb_values = None
+                    for attempt in range(6):
+                        try:
+                            res = client.models.embed_content(
+                                model=embedding_model,
+                                contents=t
+                            )
+                            emb_values = res.embeddings[0].values
+                            break
+                        except Exception as e:
+                            if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e) or "quota" in str(e).lower():
+                                delay = 1.5 * (2 ** attempt)
+                                print(f"Rate limit hit. Retrying in {delay:.2f}s...")
+                                time.sleep(delay)
+                            else:
+                                raise e
+                    if emb_values is None:
+                        raise RuntimeError("Failed to generate embedding for text after maximum retries due to rate limit exhaustion.")
+                    embeddings.append(emb_values)
+                    time.sleep(0.1)
             else:
                 # Local Ollama
                 embeddings = get_ollama_embeddings(embedding_model, texts)
