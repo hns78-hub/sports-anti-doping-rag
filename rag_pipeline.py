@@ -29,6 +29,7 @@ class RAGPipeline:
         self.embedding_model = embedding_model
         self.llm_model = llm_model
         self.api_key = api_key
+        self.rewritten_queries = []
         
         # Initialize Gemini client if using Google Gemini
         if self.provider == "Google Gemini":
@@ -91,6 +92,55 @@ class RAGPipeline:
         except Exception as e:
             raise RuntimeError(f"Failed to generate embedding from local Ollama model {self.embedding_model}: {e}")
 
+    def _rewrite_query(self, query: str) -> str:
+        """Uses the active LLM provider to rewrite the query for better semantic retrieval."""
+        prompt = (
+            f"You are a search query optimizer for a Sports Anti-Doping RAG system.\n"
+            f"The user query \"{query}\" did not find good matches. "
+            f"Please rewrite and expand this query to improve search results. "
+            f"Use descriptive keywords, expand acronyms (like WADA, TUE, ADRV), "
+            f"and focus on regulatory policy terms. "
+            f"Provide ONLY the raw optimized query string. Do not include quotes, conversational preamble, or explanations."
+        )
+        
+        try:
+            if self.provider == "Google Gemini":
+                response = self.client.models.generate_content(
+                    model=self.llm_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.7,
+                        max_output_tokens=150
+                    )
+                )
+                rewritten = response.text.strip()
+            else:
+                # Ollama
+                response = requests.post(
+                    f"{OLLAMA_HOST}/api/generate",
+                    json={
+                        "model": self.llm_model,
+                        "prompt": prompt,
+                        "options": {"temperature": 0.7},
+                        "stream": False
+                    },
+                    timeout=30
+                )
+                if response.status_code == 200:
+                    rewritten = response.json().get("response", "").strip()
+                else:
+                    rewritten = query # Fallback
+            
+            # Clean up output
+            rewritten = rewritten.strip('"\'')
+            if rewritten.lower().startswith("rewritten query:"):
+                rewritten = rewritten[len("rewritten query:"):].strip()
+            return rewritten if rewritten else query
+            
+        except Exception as e:
+            print(f"Error during query rewriting: {e}")
+            return query
+
     def _stream_ollama_generation(self, system_instruction: str, user_content: str):
         """Generates streaming responses from local Ollama and yields unified text chunks."""
         try:
@@ -124,7 +174,8 @@ class RAGPipeline:
     def query(self, user_query: str, k: int = 5) -> tuple[any, list[dict]]:
         """
         Performs vector search on ChromaDB, compiles prompt, and streams
-        the response from Gemini or Ollama.
+        the response from Gemini or Ollama. Supports automatic query expansion/rewriting
+        up to 3 times if similarity score drops below 0.5 threshold.
         """
         # Ensure database is loaded
         collection_name = get_collection_name(self.embedding_model)
@@ -134,56 +185,78 @@ class RAGPipeline:
             except Exception:
                 raise RuntimeError(f"ChromaDB collection for '{self.embedding_model}' is not initialized. Please ingest documents first.")
 
-        # 1. Embed query
-        if self.provider == "Google Gemini":
-            try:
-                embed_response = self.client.models.embed_content(
-                    model=self.embedding_model,
-                    contents=user_query
-                )
-                query_embedding = embed_response.embeddings[0].values
-            except errors.APIError as e:
-                raise RuntimeError(f"Error generating query embedding with model {self.embedding_model}: {e}")
-        else:
-            # Local Ollama
-            query_embedding = self._get_ollama_query_embedding(user_query)
-
-        # 2. Query ChromaDB for top K matches
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=k,
-            include=["documents", "metadatas", "distances"]
-        )
-
-        # 3. Parse and rank sources
-        sources = []
-        context_parts = []
+        current_query = user_query
+        self.rewritten_queries = []
+        max_retries = 3
         
-        if results and "documents" in results and results["documents"]:
-            docs = results["documents"][0]
-            metadatas = results["metadatas"][0]
-            distances = results["distances"][0]
+        sources = []
+        context_str = ""
+
+        for attempt in range(max_retries + 1):
+            # 1. Embed query
+            if self.provider == "Google Gemini":
+                try:
+                    embed_response = self.client.models.embed_content(
+                        model=self.embedding_model,
+                        contents=current_query
+                    )
+                    query_embedding = embed_response.embeddings[0].values
+                except errors.APIError as e:
+                    raise RuntimeError(f"Error generating query embedding with model {self.embedding_model}: {e}")
+            else:
+                # Local Ollama
+                query_embedding = self._get_ollama_query_embedding(current_query)
+
+            # 2. Query ChromaDB for top K matches
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=k,
+                include=["documents", "metadatas", "distances"]
+            )
+
+            # 3. Parse and rank sources
+            sources = []
+            context_parts = []
+            top_relevance = 0.0
             
-            for idx, (doc_text, meta, dist) in enumerate(zip(docs, metadatas, distances)):
-                relevance_score = max(0.0, min(1.0, 1.0 - dist))
+            if results and "documents" in results and results["documents"]:
+                docs = results["documents"][0]
+                metadatas = results["metadatas"][0]
+                distances = results["distances"][0]
                 
-                source_info = {
-                    "text": doc_text,
-                    "source": meta.get("source", "Unknown"),
-                    "page": meta.get("page", "Unknown"),
-                    "relevance": relevance_score
-                }
-                sources.append(source_info)
+                for idx, (doc_text, meta, dist) in enumerate(zip(docs, metadatas, distances)):
+                    relevance_score = max(0.0, min(1.0, 1.0 - dist))
+                    if idx == 0:
+                        top_relevance = relevance_score
+                        
+                    source_info = {
+                        "text": doc_text,
+                        "source": meta.get("source", "Unknown"),
+                        "page": meta.get("page", "Unknown"),
+                        "relevance": relevance_score
+                    }
+                    sources.append(source_info)
+                    
+                    context_parts.append(
+                        f"Source: {source_info['source']}\n"
+                        f"Page/Section: {source_info['page']}\n"
+                        f"Relevance: {relevance_score:.2f}\n"
+                        f"Content:\n{doc_text}\n"
+                        f"---"
+                    )
+                    
+            context_str = "\n".join(context_parts)
+            
+            # If top match matches or exceeds similarity threshold, or we exhausted retries
+            if top_relevance >= 0.5 or attempt == max_retries:
+                print(f"Retrieval finalized on Attempt {attempt}. Top relevance: {top_relevance:.2f}")
+                break
                 
-                context_parts.append(
-                    f"Source: {source_info['source']}\n"
-                    f"Page/Section: {source_info['page']}\n"
-                    f"Relevance: {relevance_score:.2f}\n"
-                    f"Content:\n{doc_text}\n"
-                    f"---"
-                )
-                
-        context_str = "\n".join(context_parts)
+            # Otherwise, rewrite and loop again
+            print(f"Top match relevance was {top_relevance:.2f} < 0.5. Rewriting query (Attempt {attempt+1}/{max_retries})...")
+            rewritten = self._rewrite_query(current_query)
+            self.rewritten_queries.append(rewritten)
+            current_query = rewritten
 
         # 4. Construct Prompt
         system_instruction = (

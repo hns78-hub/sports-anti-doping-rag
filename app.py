@@ -410,6 +410,11 @@ if active_query:
                 
                 thinking_placeholder.empty()
                 
+                # Render query reformulation notifications if triggered
+                if hasattr(pipeline, "rewritten_queries") and pipeline.rewritten_queries:
+                    for r_idx, q in enumerate(pipeline.rewritten_queries):
+                        st.info(f"🔄 **Query Reformulation (Attempt {r_idx+1})**: Similarity was < 50%. Expanded search to: *\"{q}\"*")
+                
                 # Stream the results
                 response_placeholder = st.empty()
                 full_response = ""
